@@ -1,0 +1,12 @@
+.venv
+__pycache__
+.pytest_cache
+.git
+.run
+._backup_*
+_submit
+tools\backup_*
+tools\*.log
+*.pyc
+*.pyo
+*.pyd

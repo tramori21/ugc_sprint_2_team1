@@ -1,0 +1,5 @@
+aiokafka==0.10.0
+clickhouse-driver==0.2.9
+pydantic==1.10.21
+python-logstash
+sentry-sdk==0.19.5

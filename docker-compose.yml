@@ -1,0 +1,261 @@
+﻿services:
+  auth_pg:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: auth
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: 123qwe
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  auth_redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: "2181"
+      ZOOKEEPER_TICK_TIME: "2000"
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9094:9094"
+    environment:
+      KAFKA_BROKER_ID: "1"
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:29092,PLAINTEXT_HOST://127.0.0.1:9094"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9094"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    environment:
+      CLICKHOUSE_DB: "ugc"
+      CLICKHOUSE_USER: "app"
+      CLICKHOUSE_PASSWORD: "app_pass"
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "8123:8123"
+      - "9003:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user app --password app_pass --query 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.4
+    environment:
+      ELASTICSEARCH_HOSTS: '["http://elasticsearch:9200"]'
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.13.4
+    ports:
+      - "5044:5044/udp"
+    volumes:
+      - ./elk/logstash/pipeline/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+    depends_on:
+      - elasticsearch
+
+  db-sentry:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: sentry
+      POSTGRES_PASSWORD: sentry
+      POSTGRES_DB: sentry
+
+  redis-sentry:
+    image: redis:7-alpine
+
+  sentry-api:
+    image: sentry:9.1.2
+    env_file:
+      - .env.sentry
+    ports:
+      - "9000:9000"
+    depends_on:
+      - db-sentry
+      - redis-sentry
+    command: run web
+
+  sentry-worker:
+    image: sentry:9.1.2
+    env_file:
+      - .env.sentry
+    depends_on:
+      - db-sentry
+      - redis-sentry
+    command: run worker
+
+  sentry-cron:
+    image: sentry:9.1.2
+    env_file:
+      - .env.sentry
+    depends_on:
+      - db-sentry
+      - redis-sentry
+    command: run cron
+
+  auth:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      RATE_LIMIT_ENABLED: "false"
+      APP_PORT: "8006"
+      POSTGRES_DB: "auth"
+      POSTGRES_USER: "app"
+      POSTGRES_PASSWORD: "123qwe"
+      POSTGRES_HOST: "auth_pg"
+      POSTGRES_PORT: "5432"
+      REDIS_HOST: "auth_redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      MONGO_HOST: "mongodb"
+      MONGO_PORT: "27017"
+      MONGO_DB: "ugc"
+      MONGO_USER: ""
+      MONGO_PASSWORD: ""
+      JWT_SECRET: "change_me"
+      JWT_ALGORITHM: "HS256"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+      REFRESH_TOKEN_EXPIRE_DAYS: "30"
+      REQUEST_LIMIT_PER_MINUTE: "20"
+      OTEL_SERVICE_NAME: "auth-service"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
+      LOGSTASH_HOST: "logstash"
+      LOGSTASH_PORT: "5044"
+      SENTRY_DSN: "http://e803447713b04f14b99b071914c3903f:645984e8d3cd47a793deb7321c09b9ac@sentry-api:9000/1"
+      SENTRY_ENVIRONMENT: "local"
+      OAUTH_STATE_TTL_SECONDS: "600"
+      OAUTH_STATE_PREFIX: "oauth_state"
+      YANDEX_CLIENT_ID: "dummy"
+      YANDEX_CLIENT_SECRET: "dummy"
+      YANDEX_REDIRECT_URI: "http://127.0.0.1:8006/api/v1/oauth/yandex/callback"
+      VK_CLIENT_ID: "dummy"
+      VK_CLIENT_SECRET: "dummy"
+      VK_REDIRECT_URI: "http://127.0.0.1:8006/api/v1/oauth/vk/callback"
+      GOOGLE_CLIENT_ID: "dummy"
+      GOOGLE_CLIENT_SECRET: "dummy"
+      GOOGLE_REDIRECT_URI: "http://127.0.0.1:8006/api/v1/oauth/google/callback"
+    ports:
+      - "8006:8006"
+    depends_on:
+      auth_pg:
+        condition: service_healthy
+      auth_redis:
+        condition: service_started
+      mongodb:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+      logstash:
+        condition: service_started
+
+  ugc_api:
+    build:
+      context: ./ugc_api
+      dockerfile: Dockerfile
+    environment:
+      PROJECT_NAME: "ugc_api"
+      APP_PORT: "8010"
+      JWT_SECRET: "change_me"
+      JWT_ALGORITHM: "HS256"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      KAFKA_TOPIC: "user_actions"
+      LOGSTASH_HOST: "logstash"
+      LOGSTASH_PORT: "5044"
+      SENTRY_DSN: "http://e803447713b04f14b99b071914c3903f:645984e8d3cd47a793deb7321c09b9ac@sentry-api:9000/1"
+      SENTRY_ENVIRONMENT: "local"
+    ports:
+      - "8010:8010"
+    depends_on:
+      kafka:
+        condition: service_started
+      logstash:
+        condition: service_started
+
+  ugc_etl:
+    build:
+      context: ./ugc_etl
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      KAFKA_TOPIC: "user_actions"
+      KAFKA_GROUP_ID: "ugc_etl_group"
+      CLICKHOUSE_HOST: "clickhouse"
+      CLICKHOUSE_PORT: "9000"
+      CLICKHOUSE_DB: "ugc"
+      CLICKHOUSE_USER: "app"
+      CLICKHOUSE_PASSWORD: "app_pass"
+      CLICKHOUSE_TABLE: "views"
+      LOGSTASH_HOST: "logstash"
+      LOGSTASH_PORT: "5044"
+      SENTRY_DSN: "http://e803447713b04f14b99b071914c3903f:645984e8d3cd47a793deb7321c09b9ac@sentry-api:9000/1"
+      SENTRY_ENVIRONMENT: "local"
+    depends_on:
+      kafka:
+        condition: service_started
+      clickhouse:
+        condition: service_healthy
+      logstash:
+        condition: service_started
+
+  content_api:
+    image: hashicorp/http-echo:0.2.3
+    command: ["-listen=:5678", "-text=content ok"]
+    ports:
+      - "8001:5678"
+
+  admin_panel:
+    image: hashicorp/http-echo:0.2.3
+    command: ["-listen=:5678", "-text=admin ok"]
+    ports:
+      - "8002:5678"
