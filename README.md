@@ -76,6 +76,8 @@
 
 Логи сервисов отправляются в Logstash и доступны в Elasticsearch и Kibana.
 
+Логи раскладываются по отдельным индексам сервисов: auth_app-*, ugc_api_app-*, ugc_etl_app-*.
+
 ### 5. Sentry
 
 Поднят self-hosted Sentry.
